@@ -391,9 +391,9 @@ def _recalc_overall(wb):
                         if str(ws.cell(row, col).value or '').strip() == 'Yes')
         ws.cell(row, 3, session_count)
         ws.cell(row, 4, yes_count)
-        pct = round(yes_count / session_count, 4) if session_count else 0
+        pct = round((yes_count / session_count) * 100, 2) if session_count else 0
         ws.cell(row, 5, pct)
-        ws.cell(row, 5).number_format = '0%'
+        ws.cell(row, 5).number_format = '0.00"%"'
         _style(ws.cell(row, 3))
         _style(ws.cell(row, 4))
         _style(ws.cell(row, 5))
