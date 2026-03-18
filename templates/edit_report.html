@@ -1,0 +1,249 @@
+{% extends "base.html" %}
+{% block title %}Edit Report — {{ program.name }}{% endblock %}
+{% block head %}
+<style>
+  .sheet-tabs { display:flex; gap:4px; margin-bottom:14px; flex-wrap:wrap; }
+  .tab { padding:6px 14px; border-radius:6px; font-size:0.82rem; font-weight:600;
+         cursor:pointer; border:1px solid var(--border); background:var(--surface);
+         color:var(--muted); transition:all 0.12s; }
+  .tab.active { background:var(--blue); color:#fff; border-color:var(--blue); }
+  .tbl-wrap { overflow:auto; max-height:65vh; border:1px solid var(--border);
+              border-radius:8px; }
+  table { border-collapse:collapse; font-size:0.8rem; }
+  th { background:#F1F5F9; padding:7px 10px; text-align:left; font-size:0.7rem;
+       font-weight:600; color:var(--muted); border-bottom:1px solid var(--border);
+       border-right:1px solid var(--border); white-space:nowrap;
+       position:sticky; top:0; z-index:2; }
+  td { padding:5px 8px; border-bottom:1px solid #F1F5F9;
+       border-right:1px solid #F1F5F9; min-width:80px; max-width:220px;
+       white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+       cursor:pointer; transition:background 0.1s; }
+  td:hover { background:var(--blue-bg); }
+  td.edited { background:#FEF9C3; }
+  td.editing { padding:0; overflow:visible; }
+  td.editing input { width:100%; padding:5px 8px; border:2px solid var(--blue);
+                     border-radius:0; font-size:0.8rem; font-family:'Inter',sans-serif;
+                     outline:none; background:#fff; }
+  .row-num { background:#F8FAFC; color:var(--light); font-size:0.7rem;
+             text-align:center; min-width:32px; max-width:32px;
+             cursor:default; border-right:1px solid var(--border); }
+  .save-bar { position:sticky; bottom:0; background:var(--surface);
+              border-top:1px solid var(--border); padding:12px 18px;
+              display:flex; align-items:center; gap:10px; }
+  .change-count { font-size:0.82rem; color:var(--muted); }
+  .change-count b { color:var(--blue); }
+</style>
+{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;justify-content:space-between;
+            flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+  <div>
+    <a href="{{ url_for('program_detail', slug=program.slug) }}"
+       style="font-size:0.8rem;color:var(--muted);text-decoration:none;
+              display:inline-block;margin-bottom:8px;">← Back</a>
+    <h1 style="font-size:1.1rem;font-weight:700;">Edit Report</h1>
+    <p style="font-size:0.8rem;color:var(--muted);margin-top:2px;">
+      Click any cell to edit. Save when done, then download.
+    </p>
+  </div>
+  <!-- Upload nominations -->
+  <div class="card" style="padding:12px 16px;display:flex;align-items:center;gap:10px;">
+    <div>
+      <div style="font-size:0.82rem;font-weight:600;">Add Emails</div>
+      <div style="font-size:0.75rem;color:var(--muted);">Upload CSV with name,email columns</div>
+    </div>
+    <div style="position:relative;">
+      <input type="file" id="nomFile" accept=".csv,.xlsx"
+             style="position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;"/>
+      <button class="btn btn-s btn-sm" onclick="uploadNominations()">Upload</button>
+    </div>
+    <div id="nomRes"></div>
+  </div>
+</div>
+
+<!-- Sheet tabs -->
+<div class="sheet-tabs">
+  {% for name in sheet_names %}
+  <div class="tab {% if loop.first %}active{% endif %}"
+       onclick="switchSheet('{{ name }}', this)">
+    {{ name }}
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Tables -->
+{% for sheet_name, rows in sheets.items() %}
+<div id="sheet_{{ loop.index0 }}"
+     style="{% if not loop.first %}display:none;{% endif %}">
+  <div class="tbl-wrap">
+    <table id="tbl_{{ loop.index0 }}">
+      <thead>
+        <tr>
+          <th class="row-num">#</th>
+          {% if rows %}
+            {% for col_idx in range(rows[0]|length) %}
+            <th>{{ ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z'][col_idx] if col_idx < 26 else col_idx }}</th>
+            {% endfor %}
+          {% endif %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row_idx, row in enumerate(rows) %}
+        <tr>
+          <td class="row-num">{{ row_idx + 1 }}</td>
+          {% for col_idx, cell in enumerate(row) %}
+          <td data-sheet="{{ sheet_name }}"
+              data-row="{{ row_idx }}"
+              data-col="{{ col_idx }}"
+              data-original="{{ cell }}"
+              onclick="startEdit(this)"
+              title="{{ cell }}">{{ cell }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endfor %}
+
+<!-- Save bar -->
+<div class="save-bar">
+  <div class="change-count" id="changeCount">No changes yet</div>
+  <button class="btn btn-p" id="saveBtn" onclick="saveAll()" disabled>
+    Save Changes
+  </button>
+  <a id="downloadBtn" href="{{ url_for('download_report', slug=program.slug) }}"
+     class="btn btn-s">Download Report</a>
+  <div id="saveRes" style="font-size:0.82rem;color:var(--muted);"></div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const SLUG = {{ program.slug|tojson }};
+const changes = {};  // key: "sheet|row|col" → {sheet,row,col,value}
+
+function switchSheet(name, tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  tab.classList.add('active');
+  document.querySelectorAll('[id^="sheet_"]').forEach(s => s.style.display='none');
+  const idx = {{ sheet_names|tojson }}.indexOf(name);
+  document.getElementById('sheet_'+idx).style.display = 'block';
+}
+
+function startEdit(td) {
+  if (td.querySelector('input')) return;
+  const val = td.dataset.original;
+  td.classList.add('editing');
+  const input = document.createElement('input');
+  input.value = td.textContent.trim();
+  input.style.minWidth = Math.max(td.offsetWidth, 80) + 'px';
+  td.innerHTML = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+
+  function commit() {
+    const newVal = input.value;
+    td.classList.remove('editing');
+    td.textContent = newVal;
+    td.title = newVal;
+    if (newVal !== val) {
+      const key = `${td.dataset.sheet}|${td.dataset.row}|${td.dataset.col}`;
+      changes[key] = {
+        sheet: td.dataset.sheet,
+        row:   parseInt(td.dataset.row),
+        col:   parseInt(td.dataset.col),
+        value: newVal
+      };
+      td.classList.add('edited');
+    } else {
+      td.classList.remove('edited');
+      const key = `${td.dataset.sheet}|${td.dataset.row}|${td.dataset.col}`;
+      delete changes[key];
+    }
+    updateCount();
+  }
+
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { input.value = val; commit(); }
+  });
+}
+
+function updateCount() {
+  const n = Object.keys(changes).length;
+  const el = document.getElementById('changeCount');
+  const btn = document.getElementById('saveBtn');
+  if (n === 0) {
+    el.innerHTML = 'No changes yet';
+    btn.disabled = true;
+  } else {
+    el.innerHTML = `<b>${n}</b> change${n>1?'s':''} unsaved`;
+    btn.disabled = false;
+  }
+}
+
+async function saveAll() {
+  const edits = Object.values(changes);
+  if (!edits.length) return;
+
+  const btn = document.getElementById('saveBtn');
+  const res = document.getElementById('saveRes');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    const r = await fetch(`/programs/${SLUG}/save-report`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(edits)
+    });
+    const d = await r.json();
+    if (d.success) {
+      res.textContent = `✓ ${d.saved} change(s) saved`;
+      res.style.color = 'var(--green)';
+      // Clear change tracking
+      Object.keys(changes).forEach(k => delete changes[k]);
+      document.querySelectorAll('td.edited').forEach(td => td.classList.remove('edited'));
+      updateCount();
+      // Update originals
+      document.querySelectorAll('td[data-row]').forEach(td => {
+        td.dataset.original = td.textContent.trim();
+      });
+    } else {
+      res.textContent = '! ' + d.error;
+      res.style.color = 'var(--red)';
+      btn.disabled = false;
+    }
+  } catch(e) {
+    res.textContent = '! Network error';
+    res.style.color = 'var(--red)';
+    btn.disabled = false;
+  }
+  btn.textContent = 'Save Changes';
+}
+
+async function uploadNominations() {
+  const file = document.getElementById('nomFile').files[0];
+  if (!file) { document.getElementById('nomFile').click(); return; }
+  const fd = new FormData();
+  fd.append('nominations_file', file);
+  const res = document.getElementById('nomRes');
+  res.textContent = 'Uploading...';
+  try {
+    const r = await fetch(`/programs/${SLUG}/upload-nominations`, {method:'POST',body:fd});
+    const d = await r.json();
+    res.textContent = d.success ? `✓ ${d.message}` : `! ${d.error}`;
+    res.style.color = d.success ? 'var(--green)' : 'var(--red)';
+    if (d.success) setTimeout(() => location.reload(), 1500);
+  } catch(e) { res.textContent = '! Error'; res.style.color='var(--red)'; }
+}
+
+// Handle nominations file input change
+document.getElementById('nomFile').addEventListener('change', uploadNominations);
+</script>
+{% endblock %}
