@@ -477,6 +477,12 @@ def upload_feedback(slug):
         from process_feedback import process_feedback
         settings = json.loads(p['settings'])
 
+        # Check file size — warn if very large
+        file_size_mb = os.path.getsize(upload_path) / (1024 * 1024)
+        if file_size_mb > 10:
+            return jsonify({'success': False,
+                'error': f'File too large ({file_size_mb:.1f}MB). Max 10MB.'})
+
         result = process_feedback(
             fb_path     = upload_path,
             config_path = config_path,
