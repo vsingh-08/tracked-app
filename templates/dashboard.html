@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Programs — TrackED{% endblock %}
+{% block content %}
+
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+  <h1 style="font-size:1.1rem;font-weight:700;">My Programs</h1>
+  <a href="{{ url_for('new_program') }}" class="btn btn-p">+ New Program</a>
+</div>
+
+{% if programs %}
+<div style="display:flex;flex-direction:column;gap:8px;">
+  {% for p in programs %}
+  <div class="card" style="padding:14px 18px;display:flex;align-items:center;
+                            gap:16px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:140px;">
+      <div style="font-weight:600;font-size:0.9rem;">{{ p.name }}</div>
+      <div style="font-size:0.78rem;color:var(--muted);margin-top:1px;">{{ p.client_name }}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div style="text-align:center;">
+        <div style="font-size:1.1rem;font-weight:700;color:var(--blue);">{{ p.sessions_done }}</div>
+        <div style="font-size:0.7rem;color:var(--light);">Sessions</div>
+      </div>
+      {% if p.report_exists %}
+        <span class="badge bg-green">● Ready</span>
+      {% else %}
+        <span class="badge bg-gray">No report</span>
+      {% endif %}
+    </div>
+    <div style="display:flex;gap:6px;">
+      {% if p.report_exists %}
+      <a href="{{ url_for('download_report', slug=p.slug) }}" class="btn btn-s btn-sm">Download</a>
+      {% endif %}
+      <a href="{{ url_for('program_detail', slug=p.slug) }}" class="btn btn-p btn-sm">Open →</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="card">
+  <div class="empty">
+    <b>No programs yet</b>
+    Create your first program to get started
+    <br><br>
+    <a href="{{ url_for('new_program') }}" class="btn btn-p">+ New Program</a>
+  </div>
+</div>
+{% endif %}
+
+<details style="margin-top:28px;">
+  <summary style="font-size:0.78rem;color:var(--light);cursor:pointer;user-select:none;">
+    Change my password
+  </summary>
+  <div class="card" style="margin-top:10px;max-width:380px;">
+    <div class="card-b">
+      <form method="POST" action="{{ url_for('change_password') }}">
+        <div class="fg">
+          <label>Current password</label>
+          <input type="password" name="current_password" required/>
+        </div>
+        <div class="fg">
+          <label>New password</label>
+          <input type="password" name="new_password" minlength="6" required/>
+        </div>
+        <div class="fg">
+          <label>Confirm new password</label>
+          <input type="password" name="confirm_password" required/>
+        </div>
+        <button class="btn btn-p" type="submit">Update Password</button>
+      </form>
+    </div>
+  </div>
+</details>
+
+{% endblock %}

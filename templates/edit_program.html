@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Edit — {{ program.name }}{% endblock %}
+{% block content %}
+<div style="max-width:600px;">
+  <a href="{{ url_for('program_detail', slug=program.slug) }}"
+     style="font-size:0.8rem;color:var(--muted);text-decoration:none;
+            display:inline-block;margin-bottom:14px;">← Back</a>
+  <h1 style="font-size:1.1rem;font-weight:700;margin-bottom:20px;">Edit Program</h1>
+
+  <form method="POST">
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-b">
+        <div class="fl-row">
+          <div class="fg">
+            <label>Program Name</label>
+            <input type="text" name="name" value="{{ program.name }}" required/>
+          </div>
+          <div class="fg">
+            <label>Client / Company</label>
+            <input type="text" name="client" value="{{ program.client_name }}" required/>
+          </div>
+        </div>
+        <div class="fl-row">
+          <div class="fg">
+            <label>Attendance Threshold (%)</label>
+            <input type="number" name="threshold"
+                   value="{{ (settings.threshold * 100)|int }}" min="0" max="100"/>
+          </div>
+          <div class="fg">
+            <label>Name format in Teams</label>
+            <select name="name_format">
+              {% for v,l in [('auto','Auto-detect'),('first_last','First Last'),
+                ('last_first','Last, First'),('last_first_co','Last, First (Company)'),
+                ('first_last_co','First Last (Company)'),('as_is','As-is')] %}
+              <option value="{{ v }}" {% if settings.name_format==v %}selected{% endif %}>{{ l }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="fl-row">
+          <div class="fg">
+            <label>Organizer / Excluded Names</label>
+            <textarea name="exclude_names">{{ settings.exclude_names|join('\n') }}</textarea>
+          </div>
+          <div class="fg">
+            <label>Mentor / Trainer Names</label>
+            <textarea name="mentor_names">{{ settings.mentor_names|join('\n') }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:20px;">
+      <a href="{{ url_for('program_detail', slug=program.slug) }}" class="btn btn-s">Cancel</a>
+      <button type="submit" class="btn btn-p">Save Changes</button>
+    </div>
+  </form>
+
+  <hr/>
+  <div style="margin-top:16px;">
+    <div style="font-size:0.82rem;font-weight:600;color:var(--red);margin-bottom:8px;">
+      Delete Program
+    </div>
+    <div style="font-size:0.78rem;color:var(--muted);margin-bottom:10px;">
+      Permanently deletes all data. Cannot be undone.
+    </div>
+    <form method="POST" action="{{ url_for('delete_program', slug=program.slug) }}"
+          onsubmit="return confirm('Delete {{ program.name }}? This cannot be undone.');">
+      <button class="btn btn-d btn-sm" type="submit">Delete Program</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
