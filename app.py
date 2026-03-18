@@ -17,12 +17,18 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask import (Flask, render_template, request, redirect,
                    url_for, session, flash, send_file, jsonify, g)
 import sqlite3
+try:
+    import psycopg2
+    import psycopg2.extras
+    HAS_PG = True
+except ImportError:
+    HAS_PG = False
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
 
 app = Flask(__name__)
 app.jinja_env.globals['enumerate'] = enumerate
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-prod')
+app.secret_key = os.environ.get('SECRET_KEY', 'tracked-app-stable-secret-2026')
 
 # ── Storage paths ─────────────────────────────────────────────────────────────
 # On Render: mount persistent disk at /data
@@ -38,17 +44,63 @@ for d in [DATA_DIR, PROGRAMS_DIR, UPLOADS_DIR]:
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+
+
 def get_db():
     if 'db' not in g:
-        g.db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
-        g.db.row_factory = sqlite3.Row
+        if DATABASE_URL and HAS_PG:
+            # PostgreSQL on Render — persistent, free
+            url = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+            conn = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+            conn.autocommit = False
+            g.db   = conn
+            g.db_type = 'pg'
+        else:
+            # SQLite locally
+            conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
+            conn.row_factory = sqlite3.Row
+            g.db   = conn
+            g.db_type = 'sqlite'
     return g.db
+
+
+def db_execute(sql, params=()):
+    """Execute SQL on either PostgreSQL or SQLite."""
+    db = get_db()
+    # Convert ? placeholders to %s for PostgreSQL
+    if getattr(g, 'db_type', 'sqlite') == 'pg':
+        sql = sql.replace('?', '%s')
+        cur = db.cursor()
+        cur.execute(sql, params)
+        db.commit()
+        return cur
+    else:
+        return db_fetchone(sql, params)
+
+
+def db_fetchone(sql, params=()):
+    cur = db_execute(sql, params)
+    row = cur.fetchone()
+    if row and getattr(g, 'db_type', 'sqlite') == 'pg':
+        return dict(row)
+    return row
+
+
+def db_fetchall(sql, params=()):
+    cur = db_execute(sql, params)
+    rows = cur.fetchall()
+    if rows and getattr(g, 'db_type', 'sqlite') == 'pg':
+        return [dict(r) for r in rows]
+    return rows
 
 
 @app.teardown_appcontext
 def close_db(e=None):
     db = g.pop('db', None)
-    if db: db.close()
+    if db:
+        try: db.close()
+        except: pass
 
 
 def init_db():
@@ -89,10 +141,10 @@ def init_db():
     admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
     admin_name     = os.environ.get('ADMIN_NAME',     'Admin')
 
-    existing = db.execute('SELECT id FROM users WHERE email=?',
-                          (admin_email,)).fetchone()
+    existing = db_fetchall('SELECT id FROM users WHERE email=?',
+                          (admin_email,))
     if not existing:
-        db.execute(
+        db_fetchone(
             'INSERT INTO users (email, name, password, is_admin) VALUES (?,?,?,1)',
             (admin_email, admin_name, generate_password_hash(admin_password))
         )
@@ -144,22 +196,22 @@ def ensure_program_dirs(slug):
 def get_program(slug, user_id):
     """Get program if user has access."""
     db = get_db()
-    row = db.execute('''
+    row = db_execute('''
         SELECT p.* FROM programs p
         JOIN program_access pa ON pa.program_id = p.id
         WHERE p.slug=? AND pa.user_id=?
-    ''', (slug, user_id)).fetchone()
+    ''', (slug, user_id))
     return row
 
 
 def get_all_user_programs(user_id):
     db = get_db()
-    return db.execute('''
+    return db_fetchone('''
         SELECT p.* FROM programs p
         JOIN program_access pa ON pa.program_id = p.id
         WHERE pa.user_id=?
         ORDER BY p.created_at DESC
-    ''', (user_id,)).fetchall()
+    ''', (user_id,))
 
 
 # ── Auth decorators ───────────────────────────────────────────────────────────
@@ -201,8 +253,8 @@ def login():
         email    = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '').strip()
         db       = get_db()
-        user     = db.execute('SELECT * FROM users WHERE email=?',
-                              (email,)).fetchone()
+        user     = db_fetchall('SELECT * FROM users WHERE email=?',
+                              (email,))
         if user and check_password_hash(user['password'], password):
             session.clear()
             session['user_id']  = user['id']
@@ -274,8 +326,8 @@ def new_program():
         db   = get_db()
 
         # Check slug uniqueness
-        existing = db.execute('SELECT id FROM programs WHERE slug=?',
-                              (slug,)).fetchone()
+        existing = db_fetchone('SELECT id FROM programs WHERE slug=?',
+                              (slug,))
         if existing:
             slug = f"{slug}-{datetime.now().strftime('%m%d%H%M')}"
 
@@ -286,13 +338,13 @@ def new_program():
             'threshold':     threshold / 100,
         }
 
-        db.execute(
+        db_fetchone(
             'INSERT INTO programs (slug, name, client_name, settings, created_by) VALUES (?,?,?,?,?)',
             (slug, name, client, json.dumps(settings), session['user_id'])
         )
-        prog_id = db.execute('SELECT id FROM programs WHERE slug=?',
-                             (slug,)).fetchone()['id']
-        db.execute('INSERT INTO program_access (program_id, user_id) VALUES (?,?)',
+        prog_id = db_execute('SELECT id FROM programs WHERE slug=?',
+                             (slug,))['id']
+        db_fetchone('INSERT INTO program_access (program_id, user_id) VALUES (?,?)',
                    (prog_id, session['user_id']))
         db.commit()
 
@@ -425,15 +477,12 @@ def upload_feedback(slug):
         from process_feedback import process_feedback
         settings = json.loads(p['settings'])
 
-        module_name = request.form.get('module_name', '').strip()
-
         result = process_feedback(
             fb_path     = upload_path,
             config_path = config_path,
             log_path    = log_path(slug),
             report_path = report_path(slug),
             prog_dir    = program_dir(slug),
-            module_name = module_name or None,
         )
 
         if not result or not result.get('success'):
@@ -501,7 +550,7 @@ def download_report(slug):
 @admin_required
 def admin_panel():
     db    = get_db()
-    users = db.execute('SELECT * FROM users ORDER BY created_at DESC').fetchall()
+    users = db_execute('SELECT * FROM users ORDER BY created_at DESC')
     return render_template('admin.html', users=users)
 
 
@@ -519,13 +568,14 @@ def admin_create_user():
 
     db = get_db()
     try:
-        db.execute(
+        db_execute(
             'INSERT INTO users (email, name, password, is_admin) VALUES (?,?,?,?)',
             (email, name, generate_password_hash(password), is_admin)
         )
         db.commit()
         flash(f'Account created for {email}', 'success')
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, Exception) as integrity_err:
+        if 'unique' not in str(integrity_err).lower() and 'duplicate' not in str(integrity_err).lower(): raise
         flash(f'Email {email} already exists.', 'error')
 
     return redirect(url_for('admin_panel'))
@@ -538,9 +588,9 @@ def toggle_admin(user_id):
         flash("You can't change your own admin status.", 'error')
         return redirect(url_for('admin_panel'))
     db   = get_db()
-    user = db.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+    user = db_execute('SELECT * FROM users WHERE id=?', (user_id,))
     if user:
-        db.execute('UPDATE users SET is_admin=? WHERE id=?',
+        db_fetchone('UPDATE users SET is_admin=? WHERE id=?',
                    (0 if user['is_admin'] else 1, user_id))
         db.commit()
         flash(f"Admin status updated for {user['email']}", 'success')
@@ -555,7 +605,7 @@ def reset_password(user_id):
         flash('Password cannot be empty.', 'error')
         return redirect(url_for('admin_panel'))
     db = get_db()
-    db.execute('UPDATE users SET password=? WHERE id=?',
+    db_execute('UPDATE users SET password=? WHERE id=?',
                (generate_password_hash(new_pw), user_id))
     db.commit()
     flash('Password reset successfully.', 'success')
@@ -569,8 +619,8 @@ def delete_user(user_id):
         flash("You can't delete yourself.", 'error')
         return redirect(url_for('admin_panel'))
     db = get_db()
-    db.execute('DELETE FROM program_access WHERE user_id=?', (user_id,))
-    db.execute('DELETE FROM users WHERE id=?', (user_id,))
+    db_execute('DELETE FROM program_access WHERE user_id=?', (user_id,))
+    db_execute('DELETE FROM users WHERE id=?', (user_id,))
     db.commit()
     flash('User deleted.', 'success')
     return redirect(url_for('admin_panel'))
@@ -587,17 +637,18 @@ def share_program(slug):
 
     email = request.form.get('email', '').strip().lower()
     db    = get_db()
-    user  = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+    user  = db_execute('SELECT id FROM users WHERE email=?', (email,))
     if not user:
         flash(f'No account found for {email}', 'error')
         return redirect(url_for('program_detail', slug=slug))
 
     try:
-        db.execute('INSERT INTO program_access (program_id, user_id) VALUES (?,?)',
+        db_fetchone('INSERT INTO program_access (program_id, user_id) VALUES (?,?)',
                    (p['id'], user['id']))
         db.commit()
         flash(f'Program shared with {email}', 'success')
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, Exception) as integrity_err:
+        if 'unique' not in str(integrity_err).lower() and 'duplicate' not in str(integrity_err).lower(): raise
         flash(f'{email} already has access.', 'info')
 
     return redirect(url_for('program_detail', slug=slug))
@@ -613,8 +664,8 @@ def change_password():
     confirm = request.form.get('confirm_password', '').strip()
 
     db   = get_db()
-    user = db.execute('SELECT * FROM users WHERE id=?',
-                      (session['user_id'],)).fetchone()
+    user = db_execute('SELECT * FROM users WHERE id=?',
+                      (session['user_id'],))
 
     if not check_password_hash(user['password'], current):
         flash('Current password is incorrect.', 'error')
@@ -623,7 +674,7 @@ def change_password():
     elif len(new_pw) < 6:
         flash('Password must be at least 6 characters.', 'error')
     else:
-        db.execute('UPDATE users SET password=? WHERE id=?',
+        db_fetchone('UPDATE users SET password=? WHERE id=?',
                    (generate_password_hash(new_pw), session['user_id']))
         db.commit()
         flash('Password changed successfully.', 'success')
@@ -633,7 +684,11 @@ def change_password():
 
 # ── Init and run ──────────────────────────────────────────────────────────────
 
-init_db()
+
+
+
+with app.app_context():
+    init_db()
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
@@ -672,7 +727,7 @@ def edit_program(slug):
         }
 
         db = get_db()
-        db.execute(
+        db_execute(
             'UPDATE programs SET name=?, client_name=?, settings=? WHERE slug=?',
             (name, client, json.dumps(new_settings), slug)
         )
@@ -694,8 +749,8 @@ def delete_program(slug):
         return redirect(url_for('dashboard'))
 
     db = get_db()
-    db.execute('DELETE FROM program_access WHERE program_id=?', (p['id'],))
-    db.execute('DELETE FROM programs WHERE id=?', (p['id'],))
+    db_execute('DELETE FROM program_access WHERE program_id=?', (p['id'],))
+    db_execute('DELETE FROM programs WHERE id=?', (p['id'],))
     db.commit()
 
     # Remove program data folder
@@ -887,12 +942,12 @@ def forgot_password():
             return render_template('forgot_password.html')
 
         db = get_db()
-        user = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        user = db_execute('SELECT id FROM users WHERE email=?', (email,))
         if not user:
             flash('No account found for this email.', 'error')
             return render_template('forgot_password.html')
 
-        db.execute('UPDATE users SET password=? WHERE id=?',
+        db_fetchone('UPDATE users SET password=? WHERE id=?',
                    (generate_password_hash(new_pw), user['id']))
         db.commit()
 
@@ -915,7 +970,7 @@ def generate_reset_link(user_id):
     """Admin generates a reset link for a user."""
     import secrets
     db   = get_db()
-    user = db.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+    user = db_execute('SELECT * FROM users WHERE id=?', (user_id,))
     if not user:
         flash('User not found.', 'error')
         return redirect(url_for('admin_panel'))
