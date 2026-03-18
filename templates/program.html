@@ -85,16 +85,6 @@
         </div>
         <div id="fbName" style="display:none;margin-top:8px;font-size:0.79rem;
              color:var(--muted);padding:6px 10px;background:var(--bg);border-radius:6px;"></div>
-        <div id="fbModuleWrap" style="display:none;margin-top:10px;">
-          <label style="font-size:0.78rem;font-weight:600;color:var(--muted);
-                        display:block;margin-bottom:4px;">
-            Which session is this feedback for?
-          </label>
-          <select id="fbModule" style="width:100%;padding:7px 10px;border:1px solid var(--border);
-                  border-radius:7px;font-size:0.83rem;font-family:Inter,sans-serif;">
-            <option value="">— Select session —</option>
-          </select>
-        </div>
         <button class="btn btn-p" style="width:100%;margin-top:10px;justify-content:center;"
                 id="fbBtn" onclick="upload('fb')" disabled>
           <span id="fbTxt">Process Feedback</span>
@@ -210,7 +200,6 @@ const SLUG = {{ program.slug|tojson }};
 fetch(`/programs/${SLUG}/sessions-json`)
   .then(r=>r.json())
   .then(sessions=>{
-    const sel = document.getElementById('fbModule');
     sessions.forEach(s=>{
       const opt = document.createElement('option');
       opt.value = s.title;
@@ -227,7 +216,6 @@ fetch(`/programs/${SLUG}/sessions-json`)
       document.getElementById(t+'Name').style.display='block';
       document.getElementById(t+'Btn').disabled=false;
       if(t==='fb'){
-        document.getElementById('fbModuleWrap').style.display='block';
       }
     }
   });
@@ -248,7 +236,6 @@ async function upload(t){
   res.innerHTML='';
   const fd=new FormData();fd.append(fld,fi.files[0]);
   if(!isA){
-    const mod=document.getElementById('fbModule')?.value||'';
     if(mod) fd.append('selected_module', mod);
   }
   try{
