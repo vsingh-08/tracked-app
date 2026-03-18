@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Date → Module Mapping — TrackED{% endblock %}
+{% block content %}
+<div style="max-width:560px;">
+  <a href="{{ url_for('program_detail', slug=program.slug) }}"
+     style="font-size:0.8rem;color:var(--muted);text-decoration:none;
+            display:inline-block;margin-bottom:14px;">← Back</a>
+  <h1 style="font-size:1.1rem;font-weight:700;margin-bottom:4px;">
+    Date → Module Name
+  </h1>
+  <p style="font-size:0.82rem;color:var(--muted);margin-bottom:20px;">
+    Map each session date to its module name. Feedback rows are matched by date automatically.
+    Sessions already processed from CSVs are pre-filled — only add missing ones.
+  </p>
+
+  <div class="card">
+    <div class="card-b">
+      <form method="POST" id="mapForm">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;
+                    margin-bottom:8px;">
+          <div style="font-size:0.75rem;font-weight:600;color:var(--muted);">DATE (DD-MM-YYYY)</div>
+          <div style="font-size:0.75rem;font-weight:600;color:var(--muted);">MODULE NAME</div>
+        </div>
+
+        <div id="rows">
+          {% for date, module in current_map.items() %}
+          {% if date %}
+          <div class="map-row" style="display:grid;grid-template-columns:1fr 1fr 28px;
+                                      gap:6px;margin-bottom:6px;">
+            <input type="text" name="date" value="{{ date }}"
+                   placeholder="e.g. 23-02-2026"
+                   style="font-family:monospace;font-size:0.82rem;"/>
+            <input type="text" name="module" value="{{ module }}"
+                   placeholder="e.g. Design Patterns"/>
+            <button type="button" onclick="this.closest('.map-row').remove()"
+                    style="border:none;background:none;cursor:pointer;
+                           color:var(--light);font-size:1rem;padding:0;">×</button>
+          </div>
+          {% endif %}
+          {% endfor %}
+        </div>
+
+        <button type="button" onclick="addRow()"
+                class="btn btn-s btn-sm" style="margin-top:6px;">
+          + Add Row
+        </button>
+
+        <hr style="margin:16px 0;"/>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <a href="{{ url_for('program_detail', slug=program.slug) }}"
+             class="btn btn-s">Cancel</a>
+          <button type="submit" class="btn btn-p">Save Mapping</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;padding:10px 12px;background:var(--blue-bg);
+       border-radius:7px;font-size:0.79rem;color:var(--blue);">
+    ℹ After saving, re-upload your feedback Excel to apply the new module names.
+    Existing "Unknown" rows in the report can be fixed in Edit Report.
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function addRow() {
+  const div = document.createElement('div');
+  div.className = 'map-row';
+  div.style = 'display:grid;grid-template-columns:1fr 1fr 28px;gap:6px;margin-bottom:6px;';
+  div.innerHTML = `
+    <input type="text" name="date" placeholder="e.g. 23-02-2026"
+           style="font-family:monospace;font-size:0.82rem;"/>
+    <input type="text" name="module" placeholder="e.g. Design Patterns"/>
+    <button type="button" onclick="this.closest('.map-row').remove()"
+            style="border:none;background:none;cursor:pointer;
+                   color:var(--light);font-size:1rem;padding:0;">×</button>`;
+  document.getElementById('rows').appendChild(div);
+  div.querySelector('input').focus();
+}
+</script>
+{% endblock %}
