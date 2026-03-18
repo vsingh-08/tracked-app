@@ -27,7 +27,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-prod')
 # ── Storage paths ─────────────────────────────────────────────────────────────
 # On Render: mount persistent disk at /data
 # Locally: use ./data
-DATA_DIR    = os.environ.get('DATA_DIR', os.path.join(os.path.dirname(__file__), 'data'))
+DATA_DIR    = os.environ.get('DATA_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance'))
 DB_PATH     = os.path.join(DATA_DIR, 'tracked.db')
 PROGRAMS_DIR= os.path.join(DATA_DIR, 'programs')
 UPLOADS_DIR = os.path.join(DATA_DIR, 'uploads')
