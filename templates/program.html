@@ -100,12 +100,7 @@
           <span id="fbTxt">Process Feedback</span>
         </button>
         <div id="fbRes"></div>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);
-             display:flex;flex-direction:column;gap:5px;">
-          <a href="{{ url_for('date_map', slug=program.slug) }}"
-             style="font-size:0.77rem;color:var(--muted);text-decoration:none;">
-            Module names showing as Unknown? Map dates here →
-          </a>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
           <a href="{{ url_for('feedback_columns', slug=program.slug) }}"
              style="font-size:0.77rem;color:var(--muted);text-decoration:none;">
             Feedback columns not matching? Fix here →
