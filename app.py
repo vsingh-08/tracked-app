@@ -14,8 +14,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-prod')
 app.jinja_env.globals['enumerate'] = enumerate
 
-DATA_DIR     = os.environ.get('DATA_DIR',
-               os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance'))
+DATA_DIR     = os.environ.get('DATA_DIR', '/tmp/tracked')
 DB_PATH      = os.path.join(DATA_DIR, 'tracked.db')
 PROGRAMS_DIR = os.path.join(DATA_DIR, 'programs')
 UPLOADS_DIR  = os.path.join(DATA_DIR, 'uploads')
@@ -746,23 +745,26 @@ def paste_feedback(slug):
             return render_template('paste_feedback.html', program=p,
                                    mentor_names=mentor_names, sessions=sessions)
 
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
-        from process_feedback_paste import process_feedback_paste
-        result = process_feedback_paste(
-            pasted_text  = pasted_text,
-            module_name  = module_name,
-            mentor_name  = mentor_name,
-            log_path     = log_path(slug),
-            report_path  = report_path(slug),
-        )
-
-        if result['success']:
-            flash(f"{result['new_rows']} feedback rows added"
-                  + (f", {result['skipped_rows']} already existed."
-                     if result['skipped_rows'] else '.'), 'success')
-            return redirect(url_for('program_detail', slug=slug))
-        else:
-            flash(f"Error: {result['error']}", 'error')
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
+            from process_feedback_paste import process_feedback_paste
+            result = process_feedback_paste(
+                pasted_text  = pasted_text,
+                module_name  = module_name,
+                mentor_name  = mentor_name,
+                log_path     = log_path(slug),
+                report_path  = report_path(slug),
+            )
+            if result['success']:
+                flash(f"{result['new_rows']} feedback rows added"
+                      + (f", {result['skipped_rows']} already existed."
+                         if result['skipped_rows'] else '.'), 'success')
+                return redirect(url_for('program_detail', slug=slug))
+            else:
+                flash(f"Error: {result['error']}", 'error')
+        except Exception as e:
+            import traceback
+            flash(f"Error: {str(e)} — {traceback.format_exc()[-300:]}", 'error')
 
     return render_template('paste_feedback.html', program=p,
                            mentor_names=mentor_names, sessions=sessions)
