@@ -67,35 +67,26 @@
     <div class="card">
       <div class="card-h">
         <div>
-          <div class="card-t">Upload Feedback Excel</div>
-          <div class="card-s">From Microsoft Forms — same file each time</div>
+          <div class="card-t">Add Feedback</div>
+          <div class="card-s">Copy from Microsoft Forms export and paste</div>
         </div>
       </div>
       <div class="card-b">
         {% if not report_exists %}
         <div style="padding:7px 10px;background:var(--yellow-bg);border-radius:6px;
-             font-size:0.77rem;color:var(--yellow);margin-bottom:10px;">
-          Process attendance first
+             font-size:0.77rem;color:var(--yellow);margin-bottom:12px;">
+          Process attendance first before adding feedback
         </div>
+        {% else %}
+        <p style="font-size:0.82rem;color:var(--muted);margin-bottom:14px;">
+          Open your Forms Excel, copy the rows, and paste them on the next page.
+          Choose the module name and mentor — system handles the rest.
+        </p>
+        <a href="{{ url_for('paste_feedback', slug=program.slug) }}"
+           class="btn btn-p" style="width:100%;justify-content:center;">
+          + Add Feedback
+        </a>
         {% endif %}
-        <div class="uzone" id="fbZone">
-          <input type="file" id="fbFile" accept=".xlsx,.xls" {% if not report_exists %}disabled{% endif %}/>
-          <div style="font-size:0.85rem;font-weight:600;margin-bottom:2px;">Drop Forms Excel here</div>
-          <div style="font-size:0.75rem;color:var(--light);">or click to browse · .xlsx only</div>
-        </div>
-        <div id="fbName" style="display:none;margin-top:8px;font-size:0.79rem;
-             color:var(--muted);padding:6px 10px;background:var(--bg);border-radius:6px;"></div>
-        <button class="btn btn-p" style="width:100%;margin-top:10px;justify-content:center;"
-                id="fbBtn" onclick="upload('fb')" disabled>
-          <span id="fbTxt">Process Feedback</span>
-        </button>
-        <div id="fbRes"></div>
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
-          <a href="{{ url_for('feedback_columns', slug=program.slug) }}"
-             style="font-size:0.77rem;color:var(--muted);text-decoration:none;">
-            Feedback columns not matching? Fix here →
-          </a>
-        </div>
       </div>
     </div>
 
