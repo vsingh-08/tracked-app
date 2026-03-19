@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Add Feedback — {{ program.name }}{% endblock %}
+{% block content %}
+<div style="max-width:700px;">
+  <a href="{{ url_for('program_detail', slug=program.slug) }}"
+     style="font-size:0.8rem;color:var(--muted);text-decoration:none;
+            display:inline-block;margin-bottom:14px;">← Back</a>
+  <h1 style="font-size:1.1rem;font-weight:700;margin-bottom:4px;">Add Feedback</h1>
+  <p style="font-size:0.82rem;color:var(--muted);margin-bottom:24px;">
+    Open your Microsoft Forms export in Excel, select all data rows, copy and paste below.
+  </p>
+
+  <form method="POST">
+
+    <!-- Module + Mentor -->
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-b">
+        <div class="fl-row">
+          <div class="fg">
+            <label>Module / Session Name *</label>
+            {% if sessions %}
+            <select name="module_name" id="moduleSelect" onchange="fillModule(this)">
+              <option value="">— Select a session —</option>
+              {% for s in sessions %}
+              <option value="{{ s.title }}">{{ s.title }} ({{ s.date }})</option>
+              {% endfor %}
+              <option value="__custom__">Type manually...</option>
+            </select>
+            <input type="text" id="moduleCustom" name="module_name_custom"
+                   placeholder="Type module name"
+                   style="margin-top:6px;display:none;"/>
+            {% else %}
+            <input type="text" name="module_name"
+                   placeholder="e.g. Introduction to GenAI" required/>
+            {% endif %}
+          </div>
+          <div class="fg">
+            <label>Mentor / Faculty Name *</label>
+            {% if mentor_names %}
+            <select name="mentor_name">
+              {% for m in mentor_names %}
+              <option value="{{ m }}">{{ m }}</option>
+              {% endfor %}
+            </select>
+            {% else %}
+            <input type="text" name="mentor_name" placeholder="Mentor name" required/>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Paste area -->
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-h">
+        <div>
+          <div class="card-t">Paste Feedback Data *</div>
+          <div class="card-s">
+            Open Forms Excel → Select all rows including header → Ctrl+C → Ctrl+V here
+          </div>
+        </div>
+      </div>
+      <div class="card-b">
+        <textarea name="feedback_text" id="feedbackText"
+                  style="width:100%;height:260px;font-family:monospace;
+                         font-size:0.78rem;padding:10px;border:1px solid var(--border);
+                         border-radius:7px;resize:vertical;outline:none;"
+                  placeholder="Paste your copied Excel/CSV data here...
+
+Example (tab-separated from Excel):
+Start time	Name	Please share your key takeaways	My rating
+2026-02-13 10:30	Alice Johnson	Learned about design patterns	5
+2026-02-13 10:31	Bob Smith	Good session on microservices	4
+"></textarea>
+        <div id="preview" style="margin-top:8px;font-size:0.77rem;color:var(--muted);"></div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <a href="{{ url_for('program_detail', slug=program.slug) }}"
+         class="btn btn-s">Cancel</a>
+      <button type="submit" class="btn btn-p" id="submitBtn">
+        Add to Report
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// Show row count preview as user pastes
+document.getElementById('feedbackText').addEventListener('input', function() {
+  const lines = this.value.trim().split('\n').filter(l => l.trim());
+  const count = Math.max(0, lines.length - 1); // subtract header
+  const el    = document.getElementById('preview');
+  if (lines.length > 1) {
+    el.textContent = `✓ ${count} data row(s) detected`;
+    el.style.color = 'var(--green)';
+  } else if (lines.length === 1) {
+    el.textContent = 'Paste more rows — only header detected so far';
+    el.style.color = 'var(--yellow)';
+  } else {
+    el.textContent = '';
+  }
+});
+
+// Handle custom module name
+function fillModule(sel) {
+  const custom = document.getElementById('moduleCustom');
+  const mainSel = document.getElementById('moduleSelect');
+  if (sel.value === '__custom__') {
+    custom.style.display = 'block';
+    custom.required = true;
+    custom.name = 'module_name';
+    mainSel.name = '_module_select_unused';
+    custom.focus();
+  } else {
+    custom.style.display = 'none';
+    custom.required = false;
+    custom.name = 'module_name_custom';
+    mainSel.name = 'module_name';
+  }
+}
+</script>
+{% endblock %}
