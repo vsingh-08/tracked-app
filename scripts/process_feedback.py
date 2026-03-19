@@ -1,176 +1,65 @@
 """
-process_feedback.py
-====================
-Each program has its own Forms with different questions.
+process_feedback_paste.py
+Processes feedback pasted directly as text (from CSV copy-paste).
+No file upload needed.
 
-Flow:
-- First upload: reads columns, tries auto-detect, returns them to UI if mapping incomplete
-- Once mapping is saved (via feedback_columns page): uses it permanently
-- Every upload: adds only new rows, never duplicates
-- Module name: matched from session log by date
-- Faculty: first mentor name from program settings
+Input format - user pastes CSV content, we parse it flexibly:
+- Tab separated (from Excel copy)
+- Comma separated (from CSV)
+- One response per line
+
+We only need: Participant Name + responses
+Module name and Mentor name are provided manually.
 """
 import os, sys, json
-from datetime import datetime, date
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
-import pandas as pd
 from openpyxl import load_workbook
 
-# These are the only fields we absolutely need
-REQUIRED = ['date', 'participant']
 
-# Best-guess candidates for auto-detection (generic fallbacks)
-DETECT = {
-    'date':        ['start time', 'completion time', 'timestamp', 'submitted', 'date'],
-    'participant': ['participant', 'name', 'respondent', 'your name', 'employee'],
-    'takeaways':   ['takeaway', 'key learning', 'learning', 'what did you'],
-    'rating':      ['rating', 'rate', 'score', 'stars', 'satisfaction'],
-    'specific':    ['specific', 'feedback for', 'delivery', 'mentor', 'comment'],
-    'other':       ['other', 'additional', 'anything else', 'suggest'],
-}
-
-COLS_KEY     = 'feedback_columns'
-DATE_MAP_KEY = 'feedback_date_map'
-
-
-def _detect(df_cols, candidates):
-    for cand in candidates:
-        for col in df_cols:
-            if cand.lower() in str(col).lower():
-                return col
-    return None
-
-
-def _load_log(log_path):
-    if os.path.exists(log_path):
-        with open(log_path) as f:
-            try: return json.load(f)
-            except: pass
-    return {}
-
-
-def _save_log(log_path, log):
-    os.makedirs(os.path.dirname(log_path) or '.', exist_ok=True)
-    with open(log_path, 'w') as f:
-        json.dump(log, f, indent=2, default=str)
-
-
-def _get_faculty(prog_dir):
-    """Get first mentor name from settings.json."""
-    path = os.path.join(prog_dir, 'settings.json')
-    if os.path.exists(path):
-        with open(path) as f:
-            try:
-                s = json.load(f)
-                mentors = [m for m in s.get('mentor_names', [])
-                           if not str(m).startswith('_')]
-                return ', '.join(mentors) if mentors else ''
-            except: pass
-    return ''
-
-
-def _parse_date(val):
-    """Extract DD-MM-YYYY from any timestamp format."""
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return None
-    if isinstance(val, (datetime, date)):
-        dt = val if isinstance(val, datetime) else datetime.combine(val, datetime.min.time())
-        return dt.strftime('%d-%m-%Y')
-    s = str(val).strip()
-    if not s or s.lower() in ('nan', 'none', ''):
-        return None
-    formats = [
-        '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d',
-        '%m/%d/%Y %H:%M:%S', '%m/%d/%Y %H:%M', '%m/%d/%Y',
-        '%m/%d/%y %H:%M:%S', '%m/%d/%y %H:%M', '%m/%d/%y',
-        '%m-%d-%y %H:%M:%S', '%m-%d-%y %H:%M', '%m-%d-%y',
-        '%d-%m-%Y %H:%M:%S', '%d-%m-%Y',
-        '%d/%m/%Y %H:%M:%S', '%d/%m/%Y',
-    ]
-    for fmt in formats:
-        try:
-            return datetime.strptime(s, fmt).strftime('%d-%m-%Y')
-        except:
-            try:
-                return datetime.strptime(s.split()[0], fmt.split()[0]).strftime('%d-%m-%Y')
-            except: continue
-    return None
-
-
-def _build_session_map(log):
-    """Build {DD-MM-YYYY: session_title} from run log."""
-    m = {}
-    for run in log.get('runs', []):
-        d, t = run.get('date',''), run.get('title','')
-        if d and t: m[d] = t
-    for run in log.get('processed_attendance', []):
-        d = run.get('date','')
-        t = run.get('session_title', run.get('title',''))
-        if d and t: m[d] = t
-    for d, t in log.get(DATE_MAP_KEY, {}).items():
-        if d not in m: m[d] = t
-    return m
-
-
-def process_feedback(fb_path, config_path, log_path, report_path, prog_dir=None, faculty=None, selected_module=None):
+def process_feedback_paste(pasted_text, module_name, mentor_name,
+                            log_path, report_path):
     """
-    Returns:
-      {'success': True, 'new_rows': N, 'skipped_rows': N}
-      {'success': False, 'error': '...'}
-      {'success': False, 'needs_mapping': True,
-       'available_columns': [...], 'auto_map': {...}}
+    Parse pasted feedback text and append to report.
+    Returns {'success': True, 'new_rows': N, 'skipped_rows': N}
     """
-    # ── Load file ─────────────────────────────────────────────────────────────
-    try:
-        df = pd.read_excel(fb_path)
-    except Exception as e:
-        return {'success': False, 'error': f'Could not open file: {e}'}
+    if not pasted_text or not pasted_text.strip():
+        return {'success': False, 'error': 'No text pasted.'}
+    if not module_name or not module_name.strip():
+        return {'success': False, 'error': 'Module name is required.'}
 
-    if df.empty:
-        return {'success': False, 'error': 'Feedback file is empty.'}
+    lines = [l for l in pasted_text.strip().splitlines() if l.strip()]
+    if not lines:
+        return {'success': False, 'error': 'No data found in pasted text.'}
 
-    available_columns = [str(c) for c in df.columns.tolist()]
+    # Detect separator
+    first_line = lines[0]
+    sep = '\t' if '\t' in first_line else ','
 
-    # ── Load log + column map ─────────────────────────────────────────────────
-    log     = _load_log(log_path)
-    col_map = log.get(COLS_KEY, {})
+    # Parse header row (first line)
+    headers = [h.strip().strip('"') for h in first_line.split(sep)]
 
-    # If no saved mapping — try auto-detect
-    if not col_map:
-        col_map = {}
-        for field, cands in DETECT.items():
-            col_map[field] = _detect(available_columns, cands)
+    # Find key columns
+    def find_col(candidates):
+        for cand in candidates:
+            for i, h in enumerate(headers):
+                if cand.lower() in h.lower():
+                    return i
+        return None
 
-        # Check if required fields were found
-        missing_required = [f for f in REQUIRED if not col_map.get(f)]
-        if missing_required:
-            # Can't proceed — tell UI to show mapping screen
-            return {
-                'success':          False,
-                'needs_mapping':    True,
-                'available_columns': available_columns,
-                'auto_map':         col_map,
-                'error':            (f"Could not auto-detect: {missing_required}. "
-                                     f"Please map the columns manually.")
-            }
+    participant_col = find_col(['participant', 'name', 'respondent', 'your name'])
+    rating_col      = find_col(['rating', 'rate', 'score', 'stars'])
+    takeaway_col    = find_col(['takeaway', 'key learning', 'what did you'])
+    specific_col    = find_col(['specific', 'feedback for', 'delivery', 'mentor'])
+    other_col       = find_col(['other', 'additional', 'anything'])
+    date_col        = find_col(['start time', 'timestamp', 'date', 'completion'])
 
-        # Auto-detect worked — save it
-        log[COLS_KEY] = col_map
-        _save_log(log_path, log)
+    if participant_col is None:
+        # No header — treat all lines as participant names only
+        participant_col = 0
 
-    # ── Faculty passed directly from app.py (from database settings) ──────────
-    if faculty is None:
-        if prog_dir is None:
-            prog_dir = os.path.dirname(os.path.dirname(log_path))
-        faculty = _get_faculty(prog_dir)
-
-    # ── Session map for module name lookup ────────────────────────────────────
-    session_map   = _build_session_map(log)
-    learned_dates = dict(log.get(DATE_MAP_KEY, {}))
-    asked         = {}
-
-    # ── Load workbook ─────────────────────────────────────────────────────────
+    # Load workbook
     if not os.path.exists(report_path):
         return {'success': False, 'error': 'Report not found. Upload attendance first.'}
 
@@ -192,54 +81,53 @@ def process_feedback(fb_path, config_path, log_path, report_path, prog_dir=None,
             if v: max_sno = max(max_sno, int(str(v)))
         except: pass
 
-    # ── Process rows ──────────────────────────────────────────────────────────
+    # Load existing keys for dedup
+    log = {}
+    if os.path.exists(log_path):
+        with open(log_path) as f:
+            try: log = json.load(f)
+            except: pass
     done_keys  = set(log.get('processed_feedback_keys', []))
     new_count  = 0
     skip_count = 0
+    timestamp  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    def get(row, field):
-        col = col_map.get(field)
-        if not col or col not in row.index: return ''
-        v = row[col]
-        if pd.isna(v): return ''
-        return str(v)
+    def get_cell(row_cells, idx):
+        if idx is None or idx >= len(row_cells):
+            return ''
+        return row_cells[idx].strip().strip('"')
 
-    for _, row in df.iterrows():
-        ts_raw = row[col_map['date']] if col_map.get('date') and col_map['date'] in row.index else ''
-        ts_str = '' if pd.isna(ts_raw) else str(ts_raw)
-        part   = get(row, 'participant')
-        if not part: continue  # skip rows with no participant
+    # Skip header line, process data lines
+    data_lines = lines[1:] if len(lines) > 1 else lines
 
-        # Resolve module name — use organiser-selected if provided
-        if selected_module:
-            mod = selected_module
-        else:
-            row_date = _parse_date(ts_raw)
-            if row_date and row_date in session_map:
-                mod = session_map[row_date]
-            elif row_date and row_date in asked:
-                mod = asked[row_date]
-            else:
-                mod = session_map.get(list(session_map.keys())[-1], 'Unknown') if session_map else 'Unknown'
+    for line in data_lines:
+        cells = line.split(sep)
+        participant = get_cell(cells, participant_col)
+        if not participant:
+            continue
 
-        key = f"{ts_str}|{part.lower()}|{mod.lower()}"
+        rating      = get_cell(cells, rating_col)
+        takeaways   = get_cell(cells, takeaway_col)
+        specific    = get_cell(cells, specific_col)
+        other       = get_cell(cells, other_col)
+        ts          = get_cell(cells, date_col) or timestamp
+
+        key = f"{ts}|{participant.lower()}|{module_name.lower()}"
         if key in done_keys:
             skip_count += 1
             continue
 
-        # Write to feedback sheet
         max_sno += 1
         ws.cell(next_row, 1, max_sno)
-        ws.cell(next_row, 2, ts_str)
-        ws.cell(next_row, 3, mod)
-        ws.cell(next_row, 4, faculty)
-        ws.cell(next_row, 5, part)
-        ws.cell(next_row, 6, get(row, 'takeaways'))
-        rating = get(row, 'rating')
+        ws.cell(next_row, 2, ts)
+        ws.cell(next_row, 3, module_name)
+        ws.cell(next_row, 4, mentor_name)
+        ws.cell(next_row, 5, participant)
+        ws.cell(next_row, 6, takeaways)
         try:    ws.cell(next_row, 7, float(rating))
         except: ws.cell(next_row, 7, rating)
-        ws.cell(next_row, 8, get(row, 'specific'))
-        ws.cell(next_row, 9, get(row, 'other'))
+        ws.cell(next_row, 8, specific)
+        ws.cell(next_row, 9, other)
 
         done_keys.add(key)
         next_row  += 1
@@ -248,14 +136,16 @@ def process_feedback(fb_path, config_path, log_path, report_path, prog_dir=None,
     wb.save(report_path)
 
     log['processed_feedback_keys'] = list(done_keys)
-    log[DATE_MAP_KEY]              = {**learned_dates, **asked}
     log.setdefault('feedback_runs', []).append({
-        'file':         os.path.basename(fb_path),
-        'faculty':      faculty,
+        'method':       'paste',
+        'module':       module_name,
+        'mentor':       mentor_name,
         'new_rows':     new_count,
         'skipped':      skip_count,
         'processed_at': datetime.now().isoformat()
     })
-    _save_log(log_path, log)
+    os.makedirs(os.path.dirname(log_path) or '.', exist_ok=True)
+    with open(log_path, 'w') as f:
+        json.dump(log, f, indent=2, default=str)
 
     return {'success': True, 'new_rows': new_count, 'skipped_rows': skip_count}
