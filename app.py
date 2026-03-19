@@ -713,6 +713,58 @@ def change_password():
     return redirect(url_for('dashboard'))
 
 
+
+@app.route('/programs/<slug>/paste-feedback', methods=['GET', 'POST'])
+@login_required
+def paste_feedback(slug):
+    p = get_program(slug, session['user_id'])
+    if not p:
+        flash('Not found.', 'error')
+        return redirect(url_for('dashboard'))
+    if not os.path.exists(report_path(slug)):
+        flash('Process attendance first.', 'error')
+        return redirect(url_for('program_detail', slug=slug))
+
+    settings     = json.loads(p['settings'])
+    mentor_names = settings.get('mentor_names', [])
+    log          = load_log(slug)
+    sessions     = [{'date': r['date'], 'title': r['title']}
+                    for r in log.get('runs', [])]
+
+    if request.method == 'POST':
+        module_name  = request.form.get('module_name', '').strip()
+        mentor_name  = request.form.get('mentor_name', '').strip()
+        pasted_text  = request.form.get('feedback_text', '').strip()
+
+        if not module_name:
+            flash('Module name is required.', 'error')
+            return render_template('paste_feedback.html', program=p,
+                                   mentor_names=mentor_names, sessions=sessions)
+        if not pasted_text:
+            flash('Please paste your feedback data.', 'error')
+            return render_template('paste_feedback.html', program=p,
+                                   mentor_names=mentor_names, sessions=sessions)
+
+        from process_feedback_paste import process_feedback_paste
+        result = process_feedback_paste(
+            pasted_text  = pasted_text,
+            module_name  = module_name,
+            mentor_name  = mentor_name,
+            log_path     = log_path(slug),
+            report_path  = report_path(slug),
+        )
+
+        if result['success']:
+            flash(f"{result['new_rows']} feedback rows added"
+                  + (f", {result['skipped_rows']} already existed."
+                     if result['skipped_rows'] else '.'), 'success')
+            return redirect(url_for('program_detail', slug=slug))
+        else:
+            flash(f"Error: {result['error']}", 'error')
+
+    return render_template('paste_feedback.html', program=p,
+                           mentor_names=mentor_names, sessions=sessions)
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 with app.app_context():
