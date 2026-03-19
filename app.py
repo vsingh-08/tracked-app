@@ -203,9 +203,10 @@ def forgot_password():
         if not user:
             flash('No account found.', 'error')
             return render_template('forgot_password.html')
-        get_db().execute('UPDATE users SET password=? WHERE id=?',
-                         (generate_password_hash(new_pw), user['id']))
-        get_db().commit()
+        db = get_db()
+        db.execute('UPDATE users SET password=? WHERE id=?',
+                   (generate_password_hash(new_pw), user['id']))
+        db.commit()
         del resets[email]
         with open(reset_file, 'w') as f: json.dump(resets, f)
         flash('Password reset. Please log in.', 'success')
@@ -745,6 +746,7 @@ def paste_feedback(slug):
             return render_template('paste_feedback.html', program=p,
                                    mentor_names=mentor_names, sessions=sessions)
 
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
         from process_feedback_paste import process_feedback_paste
         result = process_feedback_paste(
             pasted_text  = pasted_text,
