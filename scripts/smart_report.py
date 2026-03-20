@@ -375,6 +375,71 @@ def add_participants(wb, new_names):
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+def _backfill_absent(wb, new_names):
+    """Fill previous sessions with No/0 for newly added participants."""
+    ws  = wb['Consolidated Report']
+    ws2 = wb['Overall Attendance']
+
+    # Find all existing session columns
+    existing_sessions = []
+    for si in range(count_sessions(wb)):
+        att_col  = cons_att_col(si)
+        atten_col= cons_atten_col(si)
+        existing_sessions.append((att_col, atten_col, ovr_col(si)))
+
+    if not existing_sessions:
+        return
+
+    for name in new_names:
+        # Find the row just added for this participant
+        row = find_name_row(ws, name)
+        if not row:
+            continue
+        for att_col, atten_col, o_col in existing_sessions:
+            # Only fill if currently empty
+            if not ws.cell(row, att_col).value:
+                ws.cell(row, att_col,   'No')
+                ws.cell(row, atten_col, 0)
+                ws.cell(row, atten_col).number_format = '0%'
+                _style(ws.cell(row, att_col))
+                _style(ws.cell(row, atten_col))
+
+        # Overall Attendance sheet
+        row2 = find_name_row(ws2, name)
+        if row2:
+            for _, _, o_col in existing_sessions:
+                if not ws2.cell(row2, o_col).value:
+                    ws2.cell(row2, o_col, 'No')
+                    _style(ws2.cell(row2, o_col))
+
+
+def remove_participant(report_path, name):
+    """
+    Remove a participant from all sheets in the report.
+    Returns True if found and removed, False if not found.
+    """
+    wb  = load_workbook(report_path)
+    ws  = wb['Consolidated Report']
+    ws2 = wb['Overall Attendance']
+    ws3 = wb['Login']
+
+    removed = False
+
+    for sheet, ws_obj in [('Consolidated Report', ws),
+                          ('Overall Attendance', ws2)]:
+        row = find_name_row(ws_obj, name)
+        if row:
+            ws_obj.delete_rows(row)
+            # Renumber S.No column
+            for r in range(3, ws_obj.max_row + 1):
+                if ws_obj.cell(r, 2).value:
+                    ws_obj.cell(r, 1, r - 2)
+            removed = True
+
+    wb.save(report_path)
+    return removed
+
+
 def _recalc_overall(wb):
     """Recalculate Total Conducted, Attended, % with actual values."""
     ws = wb['Overall Attendance']
@@ -500,6 +565,8 @@ def process_csv(csv_path, report_path,
         if new_names:
             print(f"  Adding {len(new_names)} new participant(s): {new_names}")
             add_participants(wb, new_names)
+            # Backfill previous sessions with "No" for new participants
+            _backfill_absent(wb, new_names)
 
         si = count_sessions(wb)
     else:
