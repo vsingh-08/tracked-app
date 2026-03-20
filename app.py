@@ -366,14 +366,22 @@ def dashboard():
     programs = []
     for p in rows:
         log = load_log(p['slug'])
+        settings_p  = json.loads(p['settings'])
+        total_done  = len(log.get('runs', []))
+        # Status: Completed if report exists and has sessions, else In Progress
+        if total_done == 0:
+            status = 'not_started'
+        else:
+            status = 'completed' if log.get('completed') else 'in_progress'
         programs.append({
             'slug':          p['slug'],
             'name':          p['name'],
             'client_name':   p['client_name'],
-            'sessions_done': len(log.get('runs', [])),
+            'sessions_done': total_done,
             'report_exists': os.path.exists(report_path(p['slug'])),
             'last_updated':  log['runs'][-1]['processed'][:10]
                              if log.get('runs') else '—',
+            'status':        status,
         })
     return render_template('dashboard.html', programs=programs)
 
@@ -914,6 +922,61 @@ def paste_feedback(slug):
     return render_template('paste_feedback.html', program=p,
                            mentor_names=mentor_names, sessions=sessions,
                            saved_text='', saved_mentor='')
+
+
+@app.route('/programs/<slug>/remove-participant', methods=['POST'])
+@login_required
+def remove_participant_route(slug):
+    p = get_program(slug, session['user_id'])
+    if not p:
+        return jsonify({'success': False, 'error': 'Not found'}), 404
+
+    name = request.form.get('name', '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Name required'})
+
+    rpath = report_path(slug)
+    if not os.path.exists(rpath):
+        return jsonify({'success': False, 'error': 'No report found'})
+
+    try:
+        from smart_report import remove_participant
+        removed = remove_participant(rpath, name)
+
+        if removed:
+            # Also add to exclude_names in settings so they're skipped in future
+            settings = json.loads(p['settings'])
+            excl = settings.get('exclude_names', [])
+            if name not in excl:
+                excl.append(name)
+                settings['exclude_names'] = excl
+                db = get_db()
+                db.execute('UPDATE programs SET settings=? WHERE slug=?',
+                           (json.dumps(settings), slug))
+                db.commit()
+
+            return jsonify({'success': True,
+                            'message': f'{name} removed from report and added to exclude list'})
+        else:
+            return jsonify({'success': False,
+                            'error': f'{name} not found in report'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/programs/<slug>/toggle-complete', methods=['POST'])
+@login_required
+def toggle_complete(slug):
+    p = get_program(slug, session['user_id'])
+    if not p:
+        flash('Not found.', 'error')
+        return redirect(url_for('dashboard'))
+    log = load_log(slug)
+    log['completed'] = not log.get('completed', False)
+    save_log(slug, log)
+    status = 'Completed' if log['completed'] else 'In Progress'
+    flash(f'Program marked as {status}.', 'success')
+    return redirect(url_for('program_detail', slug=slug))
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
