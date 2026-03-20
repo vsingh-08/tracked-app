@@ -43,7 +43,7 @@
               {% endfor %}
             </select>
             {% else %}
-            <input type="text" name="mentor_name" placeholder="Mentor name" required/>
+            <input type="text" name="mentor_name" placeholder="Mentor name" value="{{ saved_mentor or '' }}" required/>
             {% endif %}
           </div>
         </div>
@@ -71,7 +71,7 @@ Example (tab-separated from Excel):
 Start time	Name	Please share your key takeaways	My rating
 2026-02-13 10:30	Alice Johnson	Learned about design patterns	5
 2026-02-13 10:31	Bob Smith	Good session on microservices	4
-"></textarea>
+">{{ saved_text or '' }}</textarea>
         <div id="preview" style="margin-top:8px;font-size:0.77rem;color:var(--muted);"></div>
       </div>
     </div>
