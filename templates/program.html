@@ -21,6 +21,13 @@
     </a>
     {% endif %}
     <a href="{{ url_for('edit_program', slug=program.slug) }}" class="btn btn-s btn-sm">Settings</a>
+    <form method="POST" action="{{ url_for('toggle_complete', slug=program.slug) }}"
+          style="display:inline;">
+      <button class="btn btn-s btn-sm" type="submit"
+              style="{% if log.get('completed') %}color:var(--green);border-color:var(--green);{% endif %}">
+        {% if log.get('completed') %}✓ Completed{% else %}Mark Complete{% endif %}
+      </button>
+    </form>
     <form method="POST" action="{{ url_for('rebuild_report', slug=program.slug) }}"
           onsubmit="return confirm('Rebuild report from all uploaded CSVs?');" style="display:inline;">
       <button class="btn btn-s btn-sm" type="submit">Rebuild</button>
@@ -141,6 +148,41 @@
       {% endif %}
     </div>
 
+    <!-- Manage participants -->
+    {% if log.runs %}
+    <div class="card" id="participantsCard" style="display:none;">
+      <div class="card-h">
+        <div>
+          <div class="card-t">Remove Participant</div>
+          <div class="card-s">Removes from report + excludes from future sessions</div>
+        </div>
+        <button onclick="document.getElementById('participantsCard').style.display='none'"
+                style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:1rem;">✕</button>
+      </div>
+      <div class="card-b">
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="removeNameInput"
+                 placeholder="Type exact name as in report"
+                 style="flex:1;padding:7px 10px;border:1px solid var(--border);
+                        border-radius:7px;font-size:0.83rem;font-family:Inter,sans-serif;"/>
+          <button class="btn btn-d btn-sm" onclick="removeParticipant()">Remove</button>
+        </div>
+        <div id="removeRes" style="margin-top:8px;font-size:0.8rem;"></div>
+        <div style="margin-top:10px;font-size:0.77rem;color:var(--muted);">
+          Use this for supervisors or observers who joined by mistake.
+          They will be excluded from all future session uploads too.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-bottom:4px;">
+      <button onclick="document.getElementById('participantsCard').style.display='block'"
+              class="btn btn-s btn-sm" style="width:100%;justify-content:center;">
+        Remove a Participant from Report
+      </button>
+    </div>
+    {% endif %}
+
     <!-- Settings summary -->
     <div class="card">
       <div class="card-h">
@@ -186,6 +228,26 @@
 {% block scripts %}
 <script>
 const SLUG = {{ program.slug|tojson }};
+
+async function removeParticipant() {
+  const name = document.getElementById('removeNameInput').value.trim();
+  const res  = document.getElementById('removeRes');
+  if (!name) { res.textContent = 'Enter a name first'; res.style.color='var(--red)'; return; }
+  if (!confirm(`Remove "${name}" from report and exclude from future sessions?`)) return;
+
+  const fd = new FormData();
+  fd.append('name', name);
+  const r = await fetch(`/programs/${SLUG}/remove-participant`, {method:'POST', body:fd});
+  const d = await r.json();
+  if (d.success) {
+    res.textContent = '✓ ' + d.message;
+    res.style.color = 'var(--green)';
+    setTimeout(() => location.reload(), 2000);
+  } else {
+    res.textContent = '! ' + d.error;
+    res.style.color = 'var(--red)';
+  }
+}
 
 // Load sessions for module picker
 fetch(`/programs/${SLUG}/sessions-json`)
