@@ -56,7 +56,7 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
                     return i
         return None
 
-    participant_col = find_col(['participant', 'name', 'respondent', 'your name'])
+    participant_col = find_col(['participant name', 'participant', 'name', 'respondent', 'your name', 'employee name', 'full name', 'username'])
     rating_col      = find_col(['rating', 'rate', 'score', 'stars'])
     takeaway_col    = find_col(['takeaway', 'key learning', 'what did you'])
     specific_col    = find_col(['specific', 'feedback for', 'delivery', 'mentor'])
@@ -64,7 +64,8 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
     date_col        = find_col(['start time', 'timestamp', 'date', 'completion'])
 
     if participant_col is None:
-        # No header — treat all lines as participant names only
+        # Try to find any column that looks like names (not numbers/dates)
+        # Default to column 0 but warn
         participant_col = 0
 
     # Load workbook
@@ -120,7 +121,13 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
         other       = get_cell(cells, other_col)
         ts          = get_cell(cells, date_col) or timestamp
 
-        key = f"{ts}|{participant.lower()}|{module_name.lower()}"
+        # Dedup key: participant + module + takeaways content
+        # Using content-based key so:
+        # - Same feedback re-pasted = skipped (same participant+module+takeaway)
+        # - Same person, different feedback same day = allowed (different takeaway)
+        takeaway_key = takeaways[:50].lower().strip() if takeaways else ''
+        rating_key   = str(rating).strip()
+        key = f"{participant.lower().strip()}|{module_name.lower()}|{takeaway_key}|{rating_key}"
         if key in done_keys:
             skip_count += 1
             continue
