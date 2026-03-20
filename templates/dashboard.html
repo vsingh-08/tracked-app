@@ -16,20 +16,25 @@
       <div style="font-weight:600;font-size:0.9rem;">{{ p.name }}</div>
       <div style="font-size:0.78rem;color:var(--muted);margin-top:1px;">{{ p.client_name }}</div>
     </div>
-    <div style="display:flex;align-items:center;gap:16px;">
+    <div style="display:flex;align-items:center;gap:14px;">
       <div style="text-align:center;">
         <div style="font-size:1.1rem;font-weight:700;color:var(--blue);">{{ p.sessions_done }}</div>
         <div style="font-size:0.7rem;color:var(--light);">Sessions</div>
       </div>
-      {% if p.report_exists %}
-        <span class="badge bg-green">● Ready</span>
+      {% if p.status == 'completed' %}
+        <span class="badge bg-green">✓ Completed</span>
+      {% elif p.status == 'in_progress' %}
+        <span class="badge bg-yellow">● In Progress</span>
       {% else %}
-        <span class="badge bg-gray">No report</span>
+        <span class="badge bg-gray">Not started</span>
+      {% endif %}
+      {% if p.last_updated != '—' %}
+      <div style="font-size:0.72rem;color:var(--light);">{{ p.last_updated }}</div>
       {% endif %}
     </div>
     <div style="display:flex;gap:6px;">
       {% if p.report_exists %}
-      <a href="{{ url_for('download_report', slug=p.slug) }}" class="btn btn-s btn-sm">Download</a>
+      <a href="{{ url_for('download_report', slug=p.slug) }}" class="btn btn-s btn-sm">↓ Download</a>
       {% endif %}
       <a href="{{ url_for('program_detail', slug=p.slug) }}" class="btn btn-p btn-sm">Open →</a>
     </div>
