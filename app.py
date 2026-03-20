@@ -978,6 +978,50 @@ def toggle_complete(slug):
     flash(f'Program marked as {status}.', 'success')
     return redirect(url_for('program_detail', slug=slug))
 
+
+@app.route('/programs/<slug>/delete-row', methods=['POST'])
+@login_required
+def delete_row(slug):
+    p = get_program(slug, session['user_id'])
+    if not p: return jsonify({'success': False, 'error': 'Not found'}), 404
+    rpath = report_path(slug)
+    if not os.path.exists(rpath):
+        return jsonify({'success': False, 'error': 'Report not found'})
+    try:
+        data  = request.json
+        sheet = data.get('sheet')
+        row   = int(data.get('row')) + 1  # 0-indexed → 1-indexed
+        wb    = load_workbook(rpath)
+        if sheet not in wb.sheetnames:
+            return jsonify({'success': False, 'error': f'Sheet "{sheet}" not found'})
+        wb[sheet].delete_rows(row)
+        wb.save(rpath)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/programs/<slug>/delete-col', methods=['POST'])
+@login_required
+def delete_col(slug):
+    p = get_program(slug, session['user_id'])
+    if not p: return jsonify({'success': False, 'error': 'Not found'}), 404
+    rpath = report_path(slug)
+    if not os.path.exists(rpath):
+        return jsonify({'success': False, 'error': 'Report not found'})
+    try:
+        data  = request.json
+        sheet = data.get('sheet')
+        col   = int(data.get('col')) + 1  # 0-indexed → 1-indexed
+        wb    = load_workbook(rpath)
+        if sheet not in wb.sheetnames:
+            return jsonify({'success': False, 'error': f'Sheet "{sheet}" not found'})
+        wb[sheet].delete_cols(col)
+        wb.save(rpath)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 
 with app.app_context():
