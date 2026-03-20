@@ -97,8 +97,9 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
             try: log = json.load(f)
             except: pass
     done_keys  = set(log.get('processed_feedback_keys', []))
-    new_count  = 0
-    skip_count = 0
+    new_count     = 0
+    skip_count    = 0
+    skipped_names = []
     timestamp  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     def get_cell(row_cells, idx):
@@ -130,6 +131,7 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
         key = f"{participant.lower().strip()}|{module_name.lower()}|{takeaway_key}|{rating_key}"
         if key in done_keys:
             skip_count += 1
+            skipped_names.append(participant)
             continue
 
         max_sno += 1
@@ -163,7 +165,7 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
     with open(log_path, 'w') as f:
         json.dump(log, f, indent=2, default=str)
 
-    return {'success': True, 'new_rows': new_count, 'skipped_rows': skip_count}
+    return {'success': True, 'new_rows': new_count, 'skipped_rows': skip_count, 'skipped_details': skipped_names}
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -882,11 +884,13 @@ def paste_feedback(slug):
         if not module_name:
             flash('Module name is required.', 'error')
             return render_template('paste_feedback.html', program=p,
-                                   mentor_names=mentor_names, sessions=sessions)
+                                   mentor_names=mentor_names, sessions=sessions,
+                                   saved_text=pasted_text, saved_mentor=mentor_name)
         if not pasted_text:
             flash('Please paste your feedback data.', 'error')
             return render_template('paste_feedback.html', program=p,
-                                   mentor_names=mentor_names, sessions=sessions)
+                                   mentor_names=mentor_names, sessions=sessions,
+                                   saved_text='', saved_mentor=mentor_name)
 
         try:
             result = process_feedback_paste(
@@ -908,7 +912,8 @@ def paste_feedback(slug):
             flash(f"Error: {str(e)} — {traceback.format_exc()[-300:]}", 'error')
 
     return render_template('paste_feedback.html', program=p,
-                           mentor_names=mentor_names, sessions=sessions)
+                           mentor_names=mentor_names, sessions=sessions,
+                           saved_text='', saved_mentor='')
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 
