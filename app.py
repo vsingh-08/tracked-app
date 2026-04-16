@@ -658,7 +658,7 @@ def share_program(slug):
                    (p['id'], user['id']))
         db.commit()
         flash(f'Shared with {email}', 'success')
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
         flash(f'{email} already has access.', 'info')
     return redirect(url_for('program_detail', slug=slug))
 
@@ -789,7 +789,7 @@ def admin_create_user():
                    (email, name, generate_password_hash(password), is_admin))
         db.commit()
         flash(f'Account created for {email}', 'success')
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
         flash(f'{email} already exists.', 'error')
     return redirect(url_for('admin_panel'))
 
