@@ -18,7 +18,6 @@ app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-in-prod')
 app.jinja_env.globals['enumerate'] = enumerate
 
 DATA_DIR     = os.environ.get('DATA_DIR', '/tmp/tracked')
-DB_PATH      = os.path.join(DATA_DIR, 'tracked.db')
 PROGRAMS_DIR = os.path.join(DATA_DIR, 'programs')
 UPLOADS_DIR  = os.path.join(DATA_DIR, 'uploads')
 
@@ -30,10 +29,6 @@ for _d in [DATA_DIR, PROGRAMS_DIR, UPLOADS_DIR]:
 
 def process_feedback_paste(pasted_text, module_name, mentor_name,
                             log_path, report_path):
-    """
-    Parse pasted feedback text and append to report.
-    Returns {'success': True, 'new_rows': N, 'skipped_rows': N}
-    """
     if not pasted_text or not pasted_text.strip():
         return {'success': False, 'error': 'No text pasted.'}
     if not module_name or not module_name.strip():
@@ -43,14 +38,10 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
     if not lines:
         return {'success': False, 'error': 'No data found in pasted text.'}
 
-    # Detect separator
     first_line = lines[0]
     sep = '\t' if '\t' in first_line else ','
-
-    # Parse header row (first line)
     headers = [h.strip().strip('"') for h in first_line.split(sep)]
 
-    # Find key columns
     def find_col(candidates):
         for cand in candidates:
             for i, h in enumerate(headers):
@@ -66,11 +57,8 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
     date_col        = find_col(['start time', 'timestamp', 'date', 'completion'])
 
     if participant_col is None:
-        # Try to find any column that looks like names (not numbers/dates)
-        # Default to column 0 but warn
         participant_col = 0
 
-    # Load workbook
     if not os.path.exists(report_path):
         return {'success': False, 'error': 'Report not found. Upload attendance first.'}
 
@@ -80,7 +68,6 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
 
     ws = wb['Feedback']
 
-    # Find next empty row + max Sno
     next_row = 2
     while ws.cell(next_row, 1).value is not None:
         next_row += 1
@@ -92,24 +79,22 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
             if v: max_sno = max(max_sno, int(str(v)))
         except: pass
 
-    # Load existing keys for dedup
     log = {}
     if os.path.exists(log_path):
         with open(log_path) as f:
             try: log = json.load(f)
             except: pass
-    done_keys  = set(log.get('processed_feedback_keys', []))
+    done_keys     = set(log.get('processed_feedback_keys', []))
     new_count     = 0
     skip_count    = 0
     skipped_names = []
-    timestamp  = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    timestamp     = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     def get_cell(row_cells, idx):
         if idx is None or idx >= len(row_cells):
             return ''
         return row_cells[idx].strip().strip('"')
 
-    # Skip header line, process data lines
     data_lines = lines[1:] if len(lines) > 1 else lines
 
     for line in data_lines:
@@ -118,16 +103,12 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
         if not participant:
             continue
 
-        rating      = get_cell(cells, rating_col)
-        takeaways   = get_cell(cells, takeaway_col)
-        specific    = get_cell(cells, specific_col)
-        other       = get_cell(cells, other_col)
-        ts          = get_cell(cells, date_col) or timestamp
+        rating    = get_cell(cells, rating_col)
+        takeaways = get_cell(cells, takeaway_col)
+        specific  = get_cell(cells, specific_col)
+        other     = get_cell(cells, other_col)
+        ts        = get_cell(cells, date_col) or timestamp
 
-        # Dedup key: participant + module + takeaways content
-        # Using content-based key so:
-        # - Same feedback re-pasted = skipped (same participant+module+takeaway)
-        # - Same person, different feedback same day = allowed (different takeaway)
         takeaway_key = takeaways[:50].lower().strip() if takeaways else ''
         rating_key   = str(rating).strip()
         key = f"{participant.lower().strip()}|{module_name.lower()}|{takeaway_key}|{rating_key}"
@@ -172,14 +153,36 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
 
 # ── Database ──────────────────────────────────────────────────────────────────
 
+class PgConn:
+    """
+    Thin wrapper so psycopg2 behaves like sqlite3.
+    Lets every route keep using get_db().execute(...).fetchone() unchanged.
+    """
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        cur = self._conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+
 def get_db():
     if 'db' not in g:
-        g.db = psycopg2.connect(
-            os.environ['DATABASE_URL'],
+        conn = psycopg2.connect(
+            os.environ.get('DATABASE_URL'),
             cursor_factory=psycopg2.extras.RealDictCursor
         )
-        g.db.autocommit = False
+        conn.autocommit = False
+        g.db = PgConn(conn)
     return g.db
+
 
 @app.teardown_appcontext
 def close_db(e=None):
@@ -187,8 +190,12 @@ def close_db(e=None):
     if db:
         db.close()
 
+
 def init_db():
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise RuntimeError("DATABASE_URL environment variable is not set.")
+    conn = psycopg2.connect(db_url)
     cur  = conn.cursor()
     cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -378,10 +385,8 @@ def dashboard():
     rows     = get_user_programs(session['user_id'])
     programs = []
     for p in rows:
-        log = load_log(p['slug'])
-        settings_p  = json.loads(p['settings'])
-        total_done  = len(log.get('runs', []))
-        # Status: Completed if report exists and has sessions, else In Progress
+        log        = load_log(p['slug'])
+        total_done = len(log.get('runs', []))
         if total_done == 0:
             status = 'not_started'
         else:
@@ -659,6 +664,7 @@ def share_program(slug):
         db.commit()
         flash(f'Shared with {email}', 'success')
     except psycopg2.errors.UniqueViolation:
+        db._conn.rollback()
         flash(f'{email} already has access.', 'info')
     return redirect(url_for('program_detail', slug=slug))
 
@@ -790,6 +796,7 @@ def admin_create_user():
         db.commit()
         flash(f'Account created for {email}', 'success')
     except psycopg2.errors.UniqueViolation:
+        db._conn.rollback()
         flash(f'{email} already exists.', 'error')
     return redirect(url_for('admin_panel'))
 
@@ -853,7 +860,7 @@ def generate_reset_link(user_id):
             except: pass
     resets[user['email']] = {'token': token, 'created_at': datetime.now().isoformat()}
     with open(rf,'w') as f: json.dump(resets, f)
-    url = f"{request.host_url.rstrip('/')}/forgot-password%semail={user['email']}&token={token}"
+    url = f"{request.host_url.rstrip('/')}/forgot-password?email={user['email']}&token={token}"
     flash(f'Reset link for {user["email"]}: {url}', 'info')
     return redirect(url_for('admin_panel'))
 
@@ -878,8 +885,6 @@ def change_password():
         flash('Password changed.', 'success')
     return redirect(url_for('dashboard'))
 
-
-
 @app.route('/programs/<slug>/paste-feedback', methods=['GET', 'POST'])
 @login_required
 def paste_feedback(slug):
@@ -898,9 +903,9 @@ def paste_feedback(slug):
                     for r in log.get('runs', [])]
 
     if request.method == 'POST':
-        module_name  = request.form.get('module_name', '').strip()
-        mentor_name  = request.form.get('mentor_name', '').strip()
-        pasted_text  = request.form.get('feedback_text', '').strip()
+        module_name = request.form.get('module_name', '').strip()
+        mentor_name = request.form.get('mentor_name', '').strip()
+        pasted_text = request.form.get('feedback_text', '').strip()
 
         if not module_name:
             flash('Module name is required.', 'error')
@@ -915,11 +920,11 @@ def paste_feedback(slug):
 
         try:
             result = process_feedback_paste(
-                pasted_text  = pasted_text,
-                module_name  = module_name,
-                mentor_name  = mentor_name,
-                log_path     = log_path(slug),
-                report_path  = report_path(slug),
+                pasted_text = pasted_text,
+                module_name = module_name,
+                mentor_name = mentor_name,
+                log_path    = log_path(slug),
+                report_path = report_path(slug),
             )
             if result['success']:
                 flash(f"{result['new_rows']} feedback rows added"
@@ -935,7 +940,6 @@ def paste_feedback(slug):
     return render_template('paste_feedback.html', program=p,
                            mentor_names=mentor_names, sessions=sessions,
                            saved_text='', saved_mentor='')
-
 
 @app.route('/programs/<slug>/remove-participant', methods=['POST'])
 @login_required
@@ -957,7 +961,6 @@ def remove_participant_route(slug):
         removed = remove_participant(rpath, name)
 
         if removed:
-            # Also add to exclude_names in settings so they're skipped in future
             settings = json.loads(p['settings'])
             excl = settings.get('exclude_names', [])
             if name not in excl:
@@ -967,7 +970,6 @@ def remove_participant_route(slug):
                 db.execute('UPDATE programs SET settings=%s WHERE slug=%s',
                            (json.dumps(settings), slug))
                 db.commit()
-
             return jsonify({'success': True,
                             'message': f'{name} removed from report and added to exclude list'})
         else:
@@ -975,7 +977,6 @@ def remove_participant_route(slug):
                             'error': f'{name} not found in report'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/programs/<slug>/toggle-complete', methods=['POST'])
 @login_required
@@ -991,7 +992,6 @@ def toggle_complete(slug):
     flash(f'Program marked as {status}.', 'success')
     return redirect(url_for('program_detail', slug=slug))
 
-
 @app.route('/programs/<slug>/delete-row', methods=['POST'])
 @login_required
 def delete_row(slug):
@@ -1003,7 +1003,7 @@ def delete_row(slug):
     try:
         data  = request.json
         sheet = data.get('sheet')
-        row   = int(data.get('row')) + 1  # 0-indexed → 1-indexed
+        row   = int(data.get('row')) + 1
         wb    = load_workbook(rpath)
         if sheet not in wb.sheetnames:
             return jsonify({'success': False, 'error': f'Sheet "{sheet}" not found'})
@@ -1012,7 +1012,6 @@ def delete_row(slug):
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
-
 
 @app.route('/programs/<slug>/delete-col', methods=['POST'])
 @login_required
@@ -1025,7 +1024,7 @@ def delete_col(slug):
     try:
         data  = request.json
         sheet = data.get('sheet')
-        col   = int(data.get('col')) + 1  # 0-indexed → 1-indexed
+        col   = int(data.get('col')) + 1
         wb    = load_workbook(rpath)
         if sheet not in wb.sheetnames:
             return jsonify({'success': False, 'error': f'Sheet "{sheet}" not found'})
