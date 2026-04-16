@@ -1,7 +1,9 @@
 """
 app.py — TrackED Web Application
 """
-import os, sys, json, shutil, re, sqlite3
+import os, sys, json, shutil, re
+import psycopg2
+import psycopg2.extras
 from openpyxl import load_workbook
 from datetime import datetime
 from functools import wraps
@@ -172,8 +174,11 @@ def process_feedback_paste(pasted_text, module_name, mentor_name,
 
 def get_db():
     if 'db' not in g:
-        g.db = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
-        g.db.row_factory = sqlite3.Row
+        g.db = psycopg2.connect(
+            os.environ['DATABASE_URL'],
+            cursor_factory=psycopg2.extras.RealDictCursor
+        )
+        g.db.autocommit = False
     return g.db
 
 @app.teardown_appcontext
@@ -183,40 +188,48 @@ def close_db(e=None):
         db.close()
 
 def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.executescript('''
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    cur  = conn.cursor()
+    cur.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-            password TEXT NOT NULL, is_admin INTEGER DEFAULT 0,
-            created_at TEXT DEFAULT (datetime('now'))
+            id SERIAL PRIMARY KEY,
+            email TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            password TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
         );
         CREATE TABLE IF NOT EXISTS programs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-            client_name TEXT NOT NULL, settings TEXT NOT NULL,
+            id SERIAL PRIMARY KEY,
+            slug TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            client_name TEXT NOT NULL,
+            settings TEXT NOT NULL,
             created_by INTEGER NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
+            created_at TEXT DEFAULT (to_char(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
         );
         CREATE TABLE IF NOT EXISTS program_access (
-            program_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            program_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
             PRIMARY KEY (program_id, user_id)
         );
     ''')
-    db.commit()
+    conn.commit()
+
     admin_email    = os.environ.get('ADMIN_EMAIL',    'admin@tracked.app')
     admin_password = os.environ.get('ADMIN_PASSWORD', 'admin123')
     admin_name     = os.environ.get('ADMIN_NAME',     'Admin')
-    existing = db.execute('SELECT id FROM users WHERE email=?',
-                          (admin_email,)).fetchone()
-    if not existing:
-        db.execute(
-            'INSERT INTO users (email, name, password, is_admin) VALUES (?,?,?,1)',
+
+    cur.execute('SELECT id FROM users WHERE email=%s', (admin_email,))
+    if not cur.fetchone():
+        cur.execute(
+            'INSERT INTO users (email, name, password, is_admin) VALUES (%s,%s,%s,1)',
             (admin_email, admin_name, generate_password_hash(admin_password))
         )
-        db.commit()
+        conn.commit()
         print(f'✅ Admin account created: {admin_email}')
-    db.close()
+    cur.close()
+    conn.close()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -255,14 +268,14 @@ def get_program(slug, user_id):
     return get_db().execute('''
         SELECT p.* FROM programs p
         JOIN program_access pa ON pa.program_id = p.id
-        WHERE p.slug=? AND pa.user_id=?
+        WHERE p.slug=%s AND pa.user_id=%s
     ''', (slug, user_id)).fetchone()
 
 def get_user_programs(user_id):
     return get_db().execute('''
         SELECT p.* FROM programs p
         JOIN program_access pa ON pa.program_id = p.id
-        WHERE pa.user_id=? ORDER BY p.created_at DESC
+        WHERE pa.user_id=%s ORDER BY p.created_at DESC
     ''', (user_id,)).fetchall()
 
 def parse_names(raw):
@@ -305,7 +318,7 @@ def login():
     if request.method == 'POST':
         email = request.form.get('email', '').strip().lower()
         pw    = request.form.get('password', '').strip()
-        user  = get_db().execute('SELECT * FROM users WHERE email=?', (email,)).fetchone()
+        user  = get_db().execute('SELECT * FROM users WHERE email=%s', (email,)).fetchone()
         if user and check_password_hash(user['password'], pw):
             session.clear()
             session['user_id']  = user['id']
@@ -343,12 +356,12 @@ def forgot_password():
         if email not in resets or resets[email].get('token') != token:
             flash('Invalid or expired link.', 'error')
             return render_template('forgot_password.html')
-        user = get_db().execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        user = get_db().execute('SELECT id FROM users WHERE email=%s', (email,)).fetchone()
         if not user:
             flash('No account found.', 'error')
             return render_template('forgot_password.html')
         db = get_db()
-        db.execute('UPDATE users SET password=? WHERE id=?',
+        db.execute('UPDATE users SET password=%s WHERE id=%s',
                    (generate_password_hash(new_pw), user['id']))
         db.commit()
         del resets[email]
@@ -402,15 +415,15 @@ def new_program():
         }
         slug = slugify(f"{client}-{name}")
         db   = get_db()
-        if db.execute('SELECT id FROM programs WHERE slug=?', (slug,)).fetchone():
+        if db.execute('SELECT id FROM programs WHERE slug=%s', (slug,)).fetchone():
             slug = f"{slug}-{datetime.now().strftime('%m%d%H%M')}"
         db.execute(
-            'INSERT INTO programs (slug,name,client_name,settings,created_by) VALUES (?,?,?,?,?)',
+            'INSERT INTO programs (slug,name,client_name,settings,created_by) VALUES (%s,%s,%s,%s,%s)',
             (slug, name, client, json.dumps(settings), session['user_id'])
         )
         db.commit()
-        prog = db.execute('SELECT id FROM programs WHERE slug=?', (slug,)).fetchone()
-        db.execute('INSERT INTO program_access (program_id,user_id) VALUES (?,?)',
+        prog = db.execute('SELECT id FROM programs WHERE slug=%s', (slug,)).fetchone()
+        db.execute('INSERT INTO program_access (program_id,user_id) VALUES (%s,%s)',
                    (prog['id'], session['user_id']))
         db.commit()
         ensure_dirs(slug)
@@ -545,7 +558,7 @@ def edit_program(slug):
             'threshold':     int(request.form.get('threshold',50)) / 100,
         }
         db = get_db()
-        db.execute('UPDATE programs SET name=?,client_name=?,settings=? WHERE slug=?',
+        db.execute('UPDATE programs SET name=%s,client_name=%s,settings=%s WHERE slug=%s',
                    (request.form.get('name'), request.form.get('client'),
                     json.dumps(new_s), slug))
         db.commit()
@@ -561,8 +574,8 @@ def delete_program(slug):
         flash('Not found.', 'error')
         return redirect(url_for('dashboard'))
     db = get_db()
-    db.execute('DELETE FROM program_access WHERE program_id=?', (p['id'],))
-    db.execute('DELETE FROM programs WHERE id=?', (p['id'],))
+    db.execute('DELETE FROM program_access WHERE program_id=%s', (p['id'],))
+    db.execute('DELETE FROM programs WHERE id=%s', (p['id'],))
     db.commit()
     pdir = program_dir(slug)
     if os.path.exists(pdir): shutil.rmtree(pdir)
@@ -636,12 +649,12 @@ def share_program(slug):
         return redirect(url_for('dashboard'))
     email = request.form.get('email','').strip().lower()
     db    = get_db()
-    user  = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+    user  = db.execute('SELECT id FROM users WHERE email=%s', (email,)).fetchone()
     if not user:
         flash(f'No account found for {email}', 'error')
         return redirect(url_for('program_detail', slug=slug))
     try:
-        db.execute('INSERT INTO program_access (program_id,user_id) VALUES (?,?)',
+        db.execute('INSERT INTO program_access (program_id,user_id) VALUES (%s,%s)',
                    (p['id'], user['id']))
         db.commit()
         flash(f'Shared with {email}', 'success')
@@ -772,7 +785,7 @@ def admin_create_user():
         return redirect(url_for('admin_panel'))
     db = get_db()
     try:
-        db.execute('INSERT INTO users (email,name,password,is_admin) VALUES (?,?,?,?)',
+        db.execute('INSERT INTO users (email,name,password,is_admin) VALUES (%s,%s,%s,%s)',
                    (email, name, generate_password_hash(password), is_admin))
         db.commit()
         flash(f'Account created for {email}', 'success')
@@ -787,9 +800,9 @@ def toggle_admin(user_id):
         flash("Can't change your own admin status.", 'error')
         return redirect(url_for('admin_panel'))
     db   = get_db()
-    user = db.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+    user = db.execute('SELECT * FROM users WHERE id=%s', (user_id,)).fetchone()
     if user:
-        db.execute('UPDATE users SET is_admin=? WHERE id=?',
+        db.execute('UPDATE users SET is_admin=%s WHERE id=%s',
                    (0 if user['is_admin'] else 1, user_id))
         db.commit()
         flash(f'Updated {user["email"]}', 'success')
@@ -803,7 +816,7 @@ def reset_password(user_id):
         flash('Password cannot be empty.', 'error')
         return redirect(url_for('admin_panel'))
     db = get_db()
-    db.execute('UPDATE users SET password=? WHERE id=?',
+    db.execute('UPDATE users SET password=%s WHERE id=%s',
                (generate_password_hash(new_pw), user_id))
     db.commit()
     flash('Password reset.', 'success')
@@ -816,8 +829,8 @@ def delete_user(user_id):
         flash("Can't delete yourself.", 'error')
         return redirect(url_for('admin_panel'))
     db = get_db()
-    db.execute('DELETE FROM program_access WHERE user_id=?', (user_id,))
-    db.execute('DELETE FROM users WHERE id=?', (user_id,))
+    db.execute('DELETE FROM program_access WHERE user_id=%s', (user_id,))
+    db.execute('DELETE FROM users WHERE id=%s', (user_id,))
     db.commit()
     flash('User deleted.', 'success')
     return redirect(url_for('admin_panel'))
@@ -827,7 +840,7 @@ def delete_user(user_id):
 def generate_reset_link(user_id):
     import secrets
     db   = get_db()
-    user = db.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+    user = db.execute('SELECT * FROM users WHERE id=%s', (user_id,)).fetchone()
     if not user:
         flash('User not found.', 'error')
         return redirect(url_for('admin_panel'))
@@ -840,7 +853,7 @@ def generate_reset_link(user_id):
             except: pass
     resets[user['email']] = {'token': token, 'created_at': datetime.now().isoformat()}
     with open(rf,'w') as f: json.dump(resets, f)
-    url = f"{request.host_url.rstrip('/')}/forgot-password?email={user['email']}&token={token}"
+    url = f"{request.host_url.rstrip('/')}/forgot-password%semail={user['email']}&token={token}"
     flash(f'Reset link for {user["email"]}: {url}', 'info')
     return redirect(url_for('admin_panel'))
 
@@ -851,7 +864,7 @@ def change_password():
     new_pw  = request.form.get('new_password','').strip()
     confirm = request.form.get('confirm_password','').strip()
     db      = get_db()
-    user    = db.execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
+    user    = db.execute('SELECT * FROM users WHERE id=%s', (session['user_id'],)).fetchone()
     if not check_password_hash(user['password'], current):
         flash('Current password incorrect.', 'error')
     elif new_pw != confirm:
@@ -859,7 +872,7 @@ def change_password():
     elif len(new_pw) < 6:
         flash('Must be at least 6 characters.', 'error')
     else:
-        db.execute('UPDATE users SET password=? WHERE id=?',
+        db.execute('UPDATE users SET password=%s WHERE id=%s',
                    (generate_password_hash(new_pw), session['user_id']))
         db.commit()
         flash('Password changed.', 'success')
@@ -951,7 +964,7 @@ def remove_participant_route(slug):
                 excl.append(name)
                 settings['exclude_names'] = excl
                 db = get_db()
-                db.execute('UPDATE programs SET settings=? WHERE slug=?',
+                db.execute('UPDATE programs SET settings=%s WHERE slug=%s',
                            (json.dumps(settings), slug))
                 db.commit()
 
